@@ -121,6 +121,7 @@ def get_optimized_route(request: LocationRequest):
     estimated_distance = len(valid_locs) * 300 
 
     # 2. Ask the LLM to pick the transport mode
+    estimated_distance = len(valid_locs) * 300 
     v_id, v_details = select_transport_mode_with_ai(
         estimated_distance, 
         request.cargo_weight_kg, 
@@ -129,13 +130,17 @@ def get_optimized_route(request: LocationRequest):
 
     # 3. Generate matrix and solve the route
     matrix = generate_real_distance_matrix(coords)
-    
-    # Pass the AI's speed and time limits into OR-tools (Requires the optimizer.py update from earlier)
-    result = optimize_routes(matrix) 
+    result = optimize_routes(matrix)
     
     if result["status"] == "success":
         distance = round(result["total_distance_km"], 2)
-        geometry = get_route_geometry(coords, result["optimized_route_indices"])
+        
+        # 2. Pass the AI's chosen vehicle into the geometry function!
+        geometry = get_route_geometry(
+            coords, 
+            result["optimized_route_indices"], 
+            v_details["name"]
+        )
         
         # 4. Your existing analysis logic works perfectly with the AI's output!
         pooling, backhaul = analyze_cargo_opportunities(

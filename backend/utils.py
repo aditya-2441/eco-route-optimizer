@@ -1,20 +1,20 @@
 import time
 import ssl
 import requests
-from geopy.geocoders import Nominatim
 import os
 import json
 from pathlib import Path
 from google import genai
 from dotenv import load_dotenv
+import urllib.parse
 
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-api_key = os.environ.get("AIzaSyDv3-HI8XM32xDC_mkJfHyNCrhx4d5hqXs")
+api_key = os.environ.get("Ac")
 # --- HACKATHON BYPASS ---
 # If the .env file STILL fails, delete the '#' on the next line and paste your key directly:
-# api_key = "AIzaSy_YOUR_ACTUAL_KEY_HERE..."
+api_key = ""
 # ------------------------
 
 if not api_key:
@@ -32,38 +32,34 @@ except Exception as e:
 
 # MAC SSL BYPASS
 ssl._create_default_https_context = ssl._create_unverified_context
-geolocator = Nominatim(user_agent="aditya_uu_csc_eco_route", timeout=15)
 
 def calculate_co2(distance_km: float, vehicle_type: str = "diesel_truck") -> float:
     factors = {"electric_van": 0.05, "diesel_van": 0.15, "diesel_truck": 0.35}
     return round(distance_km * factors.get(vehicle_type, 0.2), 2)
 
 def get_coordinates(location_name: str):
-    # --- HACKATHON DEMO FALLBACK ---
-    # Bypasses IP blocks to guarantee the live demo works flawlessly
-    demo_cities = {
-        "new delhi, india": (28.6139, 77.2090),
-        "agra, india": (27.1767, 78.0081),
-        "jaipur, india": (26.9124, 75.7873),
-        "chandigarh, india": (30.7333, 76.7794)
-    }
+    """Uses Google Maps Enterprise Geocoding to find ANY city worldwide."""
     
-    clean_name = location_name.strip().lower()
+    # 1. PASTE YOUR ACTUAL KEY RIGHT HERE INSIDE THE QUOTES
+    api_key = ""
     
-    # 1. Check our guaranteed demo dictionary first
-    if clean_name in demo_cities:
-        print(f"✅ Using guaranteed demo coordinates for: {location_name}")
-        return demo_cities[clean_name]
-        
-    # 2. If it's a new city, try the live API
     try:
-        print(f"📡 Asking OpenStreetMap for: {location_name}")
-        location = geolocator.geocode(location_name)
-        if location:
-            return (location.latitude, location.longitude)
-        return None
+        # 2. Encode the city name for the URL
+        safe_name = urllib.parse.quote(location_name)
+        url = f"https://maps.googleapis.com/maps/api/geocode/json?address={safe_name}&key={api_key}"
+        
+        response = requests.get(url).json()
+        
+        if response.get("status") == "OK":
+            location = response["results"][0]["geometry"]["location"]
+            print(f"✅ Google Geocoded: {location_name} -> {location['lat']}, {location['lng']}")
+            return (location["lat"], location["lng"])
+        else:
+            print(f"❌ Google Geocoding failed for {location_name}. Status: {response.get('status')}")
+            return None
+            
     except Exception as e:
-        print(f"❌ Geocoding failed for {location_name}: {e}")
+        print(f"❌ API Request crashed: {e}")
         return None
 
 def generate_real_distance_matrix(coords: list):
@@ -79,18 +75,28 @@ def generate_real_distance_matrix(coords: list):
     matrix = [[int(d / 1000) for d in row] for row in response["distances"]]
     return matrix
 
-def get_route_geometry(coords: list, order: list):
-    """Fetches real road path geometry for the optimized sequence."""
+def get_route_geometry(coords: list, order: list, vehicle_name: str):
+    """Fetches real road paths, or straight lines for flights and trains."""
     ordered_coords = [coords[i] for i in order]
+    
+    # 1. AIR & RAIL: Return straight-line coordinates
+    if "Air" in vehicle_name or "Rail" in vehicle_name:
+        return [[c[0], c[1]] for c in ordered_coords]
+        
+    # 2. ROAD: Ask OSRM to map the exact highway curves
     coord_str = ";".join([f"{c[1]},{c[0]}" for c in ordered_coords])
     url = f"http://router.project-osrm.org/route/v1/driving/{coord_str}?overview=full&geometries=geojson"
     
-    response = requests.get(url).json()
-    if response.get("code") == "Ok":
-        # Flip (lon, lat) to (lat, lon) for Leaflet
-        return [[p[1], p[0]] for p in response["routes"][0]["geometry"]["coordinates"]]
-    return []
-
+    try:
+        response = requests.get(url).json()
+        if response.get("code") == "Ok":
+            # OSRM returns [lon, lat], we flip it to [lat, lon] for Google Maps
+            return [[p[1], p[0]] for p in response["routes"][0]["geometry"]["coordinates"]]
+    except Exception as e:
+        print(f"OSRM routing failed: {e}")
+        
+    # Fallback to straight lines if the API ever drops
+    return [[c[0], c[1]] for c in ordered_coords]
 # --- ADVANCED LOGISTICS ENGINE ---
 
 VEHICLE_DB = {

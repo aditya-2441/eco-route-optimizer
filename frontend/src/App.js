@@ -1,21 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import { Leaf, Milestone as RouteIcon, MapPin, Package, Weight, Info, RefreshCw, IndianRupee, Truck, Search, PlusCircle, CheckCircle } from 'lucide-react';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
-
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-let DefaultIcon = L.icon({
-    iconUrl: icon, shadowUrl: iconShadow, iconSize: [25, 41], iconAnchor: [12, 41]
-});
-L.Marker.prototype.options.icon = DefaultIcon;
-
-function ChangeView({ center }) {
-  const map = useMap();
-  map.setView(center, map.getZoom());
-  return null;
-}
+import { GoogleMap, useJsApiLoader, DirectionsRenderer, Marker, Polyline } from '@react-google-maps/api';
 
 // ==========================================
 // MODULE 1: SHIPPER VIEW
@@ -191,8 +176,19 @@ function AIOptimizerView() {
   const [cargoType, setCargoType] = useState("Standard");
   const [maxDeliveryHours, setMaxDeliveryHours] = useState(72);
   const [results, setResults] = useState(null);
+  const [directionsResponse, setDirectionsResponse] = useState(null);
   const [loading, setLoading] = useState(false);
   const [mapCenter, setMapCenter] = useState([28.6139, 77.2090]);
+
+  const { isLoaded } = useJsApiLoader({
+    id: 'google-map-script',
+    googleMapsApiKey: "" // Paste your actual key here for the hackathon
+  });
+
+  const containerStyle = {
+    width: '100%',
+    height: '100%'
+  };
 
   const handleOptimize = async () => {
     setLoading(true);
@@ -214,6 +210,35 @@ function AIOptimizerView() {
       if (data.status === "success") {
         setResults(data);
         setMapCenter(data.coordinates[0]);
+
+        const isFlight = data.vehicle_recommended?.includes("Air");
+        const isRail = data.vehicle_recommended?.includes("Rail");
+
+        if (isFlight) {
+          // FLIGHT: Clear road directions, we will draw a flight path!
+          setDirectionsResponse(null);
+        } else if (window.google) {
+          // TRUCK & TRAIN: Let Google snap to the roads/rails
+          const directionsService = new window.google.maps.DirectionsService();
+          
+          directionsService.route({
+            origin: data.valid_locations[0],
+            destination: data.valid_locations[data.valid_locations.length - 1],
+            waypoints: data.valid_locations.slice(1, -1).map(city => ({ location: city, stopover: true })),
+            // Use TRANSIT for trains, DRIVING for trucks
+            travelMode: isRail ? window.google.maps.TravelMode.TRANSIT : window.google.maps.TravelMode.DRIVING,
+          }, (result, status) => {
+            if (status === window.google.maps.DirectionsStatus.OK) {
+              setDirectionsResponse(result);
+            } else {
+              // Fallback to driving if there is no direct train route available
+              console.warn("Transit failed, falling back to driving.");
+              directionsService.route({...arguments[0], travelMode: window.google.maps.TravelMode.DRIVING}, (res, stat) => {
+                if (stat === window.google.maps.DirectionsStatus.OK) setDirectionsResponse(res);
+              });
+            }
+          });
+        }
       } else {
         alert(data.message);
       }
@@ -327,17 +352,54 @@ function AIOptimizerView() {
         )}
       </div>
 
-      <div className="w-2/3 relative">
-        <MapContainer center={mapCenter} zoom={6} className="w-full h-full z-0">
-          <ChangeView center={mapCenter} />
-          <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          {results && results.coordinates && results.coordinates.map((coord, idx) => (
-            <Marker key={idx} position={coord}>
-              <Popup>{results.valid_locations[idx]}</Popup>
-            </Marker>
-          ))}
-          {results && <Polyline positions={getRoutePath()} color="#16a34a" weight={5} opacity={0.8} />}
-        </MapContainer>
+      <div className="w-2/3 relative bg-gray-200 flex items-center justify-center h-full min-h-[500px]">
+        {!isLoaded ? (
+          <div className="text-gray-500 font-bold">Loading Google Maps...</div>
+        ) : !results ? (
+          <div className="text-gray-500 font-bold text-xl">
+            📍 Enter your locations and click Auto-Dispatch!
+          </div>
+        ) : (
+          <GoogleMap
+            mapContainerStyle={{ width: '100%', height: '100%' }}
+            center={{ lat: mapCenter[0], lng: mapCenter[1] }}
+            zoom={5}
+          >
+            {/* SCENARIO A: Truck or Train (Google handles everything) */}
+            {directionsResponse && !results.vehicle_recommended?.includes("Air") && (
+              <DirectionsRenderer directions={directionsResponse} />
+            )}
+
+            {/* SCENARIO B: Flight Path (We draw a curved dashed line) */}
+            {results && results.vehicle_recommended?.includes("Air") && (
+              <>
+                {/* Draw the Airports */}
+                {results.coordinates.map((coord, idx) => (
+                  <Marker 
+                    key={idx} 
+                    position={{ lat: coord[0], lng: coord[1] }} 
+                    label={`${idx + 1}`}
+                  />
+                ))}
+                
+                {/* Draw the curved flight path */}
+                <Polyline 
+                  path={results.coordinates.map(coord => ({ lat: coord[0], lng: coord[1] }))} 
+                  options={{ 
+                    strokeColor: '#3b82f6', // Airline Blue
+                    strokeOpacity: 0,
+                    icons: [{
+                      icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 4 },
+                      offset: '0',
+                      repeat: '30px' // Dashed line effect
+                    }],
+                    geodesic: true // Makes the line curve beautifully over the globe!
+                  }} 
+                />
+              </>
+            )}
+          </GoogleMap>
+        )}
       </div>
     </div>
   );
