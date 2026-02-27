@@ -2,6 +2,33 @@ import time
 import ssl
 import requests
 from geopy.geocoders import Nominatim
+import os
+import json
+from pathlib import Path
+from google import genai
+from dotenv import load_dotenv
+
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+api_key = os.environ.get("AIzaSyDv3-HI8XM32xDC_mkJfHyNCrhx4d5hqXs")
+# --- HACKATHON BYPASS ---
+# If the .env file STILL fails, delete the '#' on the next line and paste your key directly:
+# api_key = "AIzaSy_YOUR_ACTUAL_KEY_HERE..."
+# ------------------------
+
+if not api_key:
+    print(f"🚨 ERROR: Still cannot find GOOGLE_API_KEY in {env_path}")
+else:
+    print("✅ SUCCESS: Found GOOGLE_API_KEY!")
+
+# Initialize the new SDK client
+try:
+    client = genai.Client(api_key=api_key)
+except Exception as e:
+    print(f"⚠️ Warning: Could not initialize AI client: {e}")
+    client = None
+
 
 # MAC SSL BYPASS
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -84,14 +111,53 @@ BACKHAUL_CARGO = {
     "jaipur, india": {"item": "Handicrafts", "weight": 2000, "destination": "New Delhi", "revenue": 8500}
 }
 
-def recommend_transport(weight_kg: float):
-    """Automatically selects the most cost/carbon-efficient vehicle."""
-    if weight_kg <= VEHICLE_DB["electric_van"]["max_weight"]:
-        return "electric_van", VEHICLE_DB["electric_van"]
-    elif weight_kg <= VEHICLE_DB["diesel_van"]["max_weight"]:
-        return "diesel_van", VEHICLE_DB["diesel_van"]
-    else:
-        return "diesel_truck", VEHICLE_DB["diesel_truck"]
+def select_transport_mode_with_ai(total_distance_km: float, cargo_weight_kg: float, max_delivery_hours: int):
+    """
+    Uses the NEW Gemini SDK to dynamically calculate and select the best transport mode.
+    """
+    prompt = f"""
+    You are an enterprise logistics AI. 
+    A user needs to ship cargo with the following constraints:
+    - Distance: {total_distance_km} km
+    - Weight: {cargo_weight_kg} kg
+    - Time Limit: {max_delivery_hours} hours
+
+    Based on physics, standard transport speeds, and minimizing carbon footprints, 
+    select the absolute best mode of transport (e.g., Air Cargo, Freight Rail, Electric Van, or Standard Truck).
+    
+    You MUST respond with ONLY a valid JSON object matching this exact format. Do not use markdown blocks:
+    {{
+        "name": "Vehicle Name",
+        "speed_kmh": 80,
+        "co2_factor": 0.120,
+        "cost_per_km": 40,
+        "max_weight": 24000
+    }}
+    """
+    
+    try:
+        if not client:
+            raise ValueError("No API Key found.")
+            
+        # New SDK syntax for generating content
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
+        
+        clean_text = response.text.strip().replace("```json", "").replace("```", "")
+        v_details = json.loads(clean_text)
+        return "ai_selected_vehicle", v_details
+        
+    except Exception as e:
+        print(f"⚠️ AI Routing Failed (Using Fallback): {e}")
+        # Fallback to your original logic
+        if cargo_weight_kg <= VEHICLE_DB["electric_van"]["max_weight"]:
+            return "electric_van", VEHICLE_DB["electric_van"]
+        elif cargo_weight_kg <= VEHICLE_DB["diesel_van"]["max_weight"]:
+            return "diesel_van", VEHICLE_DB["diesel_van"]
+        else:
+            return "diesel_truck", VEHICLE_DB["diesel_truck"]
 
 def analyze_cargo_opportunities(valid_locations, optimized_indices, vehicle_capacity, current_weight):
     """Scans the route for empty space and suggests pooling and return cargo."""

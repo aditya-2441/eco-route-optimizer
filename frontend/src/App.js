@@ -189,6 +189,7 @@ function AIOptimizerView() {
   const [locations, setLocations] = useState("New Delhi, India\nAgra, India\nJaipur, India\nChandigarh, India");
   const [cargoWeight, setCargoWeight] = useState(800); 
   const [cargoType, setCargoType] = useState("Standard");
+  const [maxDeliveryHours, setMaxDeliveryHours] = useState(72);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [mapCenter, setMapCenter] = useState([28.6139, 77.2090]);
@@ -204,7 +205,8 @@ function AIOptimizerView() {
         body: JSON.stringify({ 
           locations: locationArray, 
           cargo_weight_kg: Number(cargoWeight), 
-          cargo_type: cargoType
+          cargo_type: cargoType,
+          max_delivery_hours: Number(maxDeliveryHours)
         })
       });
       
@@ -241,7 +243,7 @@ function AIOptimizerView() {
         </div>
 
         <div className="flex gap-4 mb-6">
-          <div className="w-1/2">
+          <div className="w-1/3">
             <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center">
               <Weight className="mr-1 w-4 h-4 text-green-600" /> Weight (kg)
             </label>
@@ -256,6 +258,12 @@ function AIOptimizerView() {
               <option value="Perishable">Perishable</option>
               <option value="Hazardous">Hazardous</option>
             </select>
+          </div>
+          <div className="w-1/3">
+            <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center">
+              ⏱️ Time Limit (Hrs)
+            </label>
+            <input type="number" className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none bg-gray-50" value={maxDeliveryHours} onChange={(e) => setMaxDeliveryHours(e.target.value)} />
           </div>
         </div>
 

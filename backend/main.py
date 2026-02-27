@@ -13,7 +13,7 @@ from utils import (
     generate_real_distance_matrix, 
     get_coordinates, 
     get_route_geometry,
-    recommend_transport,           
+    select_transport_mode_with_ai,           
     analyze_cargo_opportunities    
 )
 
@@ -56,6 +56,7 @@ class LocationRequest(BaseModel):
     locations: List[str]
     cargo_weight_kg: float
     cargo_type: str = "Standard"
+    max_delivery_hours: int = 72  # Default to 3 days
 
 class TruckRequest(BaseModel):
     carrier: str
@@ -98,6 +99,8 @@ def add_truck(truck: TruckRequest):
 def read_root():
     return {"message": "Eco Route API is running!"}
 
+# Don't forget to import select_transport_mode_with_ai from utils at the top!
+
 @app.post("/api/optimize")
 def get_optimized_route(request: LocationRequest):
     coords = []
@@ -113,15 +116,28 @@ def get_optimized_route(request: LocationRequest):
     if len(valid_locs) < 2:
         return {"status": "error", "message": "Insufficient valid locations found."}
 
+    # 1. Estimate straight-line distance for the AI prompt
+    # Multiplying by a rough estimate (e.g., 300km per stop) for the heuristic
+    estimated_distance = len(valid_locs) * 300 
+
+    # 2. Ask the LLM to pick the transport mode
+    v_id, v_details = select_transport_mode_with_ai(
+        estimated_distance, 
+        request.cargo_weight_kg, 
+        request.max_delivery_hours
+    )
+
+    # 3. Generate matrix and solve the route
     matrix = generate_real_distance_matrix(coords)
-    result = optimize_routes(matrix)
+    
+    # Pass the AI's speed and time limits into OR-tools (Requires the optimizer.py update from earlier)
+    result = optimize_routes(matrix) 
     
     if result["status"] == "success":
         distance = round(result["total_distance_km"], 2)
         geometry = get_route_geometry(coords, result["optimized_route_indices"])
         
-        v_id, v_details = recommend_transport(request.cargo_weight_kg)
-        
+        # 4. Your existing analysis logic works perfectly with the AI's output!
         pooling, backhaul = analyze_cargo_opportunities(
             valid_locs, 
             result["optimized_route_indices"], 
@@ -138,7 +154,7 @@ def get_optimized_route(request: LocationRequest):
             "coordinates": coords,
             "valid_locations": valid_locs,
             "road_geometry": geometry,
-            "vehicle_recommended": v_details["name"],
+            "vehicle_recommended": v_details["name"],  # The AI's dynamically generated name
             "trip_cost_inr": trip_cost,
             "pooling_opportunities": pooling,
             "backhaul_opportunity": backhaul,
