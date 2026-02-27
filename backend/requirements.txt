@@ -2,3 +2,5 @@ fastapi
 uvicorn
 ortools
 python-dotenv
+pandas
+geopy
