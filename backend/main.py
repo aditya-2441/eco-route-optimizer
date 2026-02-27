@@ -1,16 +1,20 @@
-import time# backend/main.py
+# backend/main.py
+import time
+import sqlite3
+import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 
-# We need to add get_coordinates and get_route_geometry to this import line
 from optimizer import optimize_routes
 from utils import (
     calculate_co2, 
     generate_real_distance_matrix, 
     get_coordinates, 
-    get_route_geometry
+    get_route_geometry,
+    recommend_transport,           
+    analyze_cargo_opportunities    
 )
 
 app = FastAPI(title="EcoRoute API")
@@ -23,10 +27,73 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- 1. DATABASE SETUP ---
+def init_db():
+    conn = sqlite3.connect('eco_route.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS trucks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            carrier TEXT,
+            route TEXT,
+            capacity INTEGER,
+            type TEXT
+        )
+    ''')
+    c.execute("SELECT COUNT(*) FROM trucks")
+    if c.fetchone()[0] == 0:
+        c.execute("INSERT INTO trucks (carrier, route, capacity, type) VALUES (?, ?, ?, ?)",
+                  ("GreenLine Logistics", json.dumps(["New Delhi", "Jaipur"]), 2000, "Standard"))
+        c.execute("INSERT INTO trucks (carrier, route, capacity, type) VALUES (?, ?, ?, ?)",
+                  ("FreshFleet Express", json.dumps(["Agra", "New Delhi", "Chandigarh"]), 800, "Perishable"))
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- 2. DATA MODELS ---
 class LocationRequest(BaseModel):
     locations: List[str]
-    vehicle_type: str = "diesel_truck"
+    cargo_weight_kg: float
+    cargo_type: str = "Standard"
 
+class TruckRequest(BaseModel):
+    carrier: str
+    route: List[str]
+    capacity: int
+    type: str
+
+# --- 3. FREIGHT MARKETPLACE ENDPOINTS ---
+@app.get("/api/trucks")
+def get_trucks():
+    conn = sqlite3.connect('eco_route.db')
+    c = conn.cursor()
+    c.execute("SELECT id, carrier, route, capacity, type FROM trucks ORDER BY id DESC")
+    rows = c.fetchall()
+    conn.close()
+    
+    trucks = []
+    for row in rows:
+        trucks.append({
+            "id": row[0],
+            "carrier": row[1],
+            "route": json.loads(row[2]),
+            "capacity": row[3],
+            "type": row[4]
+        })
+    return {"status": "success", "trucks": trucks}
+
+@app.post("/api/trucks")
+def add_truck(truck: TruckRequest):
+    conn = sqlite3.connect('eco_route.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO trucks (carrier, route, capacity, type) VALUES (?, ?, ?, ?)",
+              (truck.carrier, json.dumps(truck.route), truck.capacity, truck.type))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": "Truck added to database"}
+
+# --- 4. AI ROUTING ENGINE ENDPOINTS ---
 @app.get("/")
 def read_root():
     return {"message": "Eco Route API is running!"}
@@ -36,7 +103,6 @@ def get_optimized_route(request: LocationRequest):
     coords = []
     valid_locs = []
     
-    # Now that get_coordinates is imported, this loop will work!
     for loc in request.locations:
         c = get_coordinates(loc)
         if c:
@@ -47,23 +113,36 @@ def get_optimized_route(request: LocationRequest):
     if len(valid_locs) < 2:
         return {"status": "error", "message": "Insufficient valid locations found."}
 
-    # 1. Get real road distances
     matrix = generate_real_distance_matrix(coords)
-    
-    # 2. Run the AI Optimization
     result = optimize_routes(matrix)
     
     if result["status"] == "success":
-        # 3. Get actual roadway geometry for the optimized order
+        distance = round(result["total_distance_km"], 2)
         geometry = get_route_geometry(coords, result["optimized_route_indices"])
         
-        # 4. Calculate CO2 and package the response
+        v_id, v_details = recommend_transport(request.cargo_weight_kg)
+        
+        pooling, backhaul = analyze_cargo_opportunities(
+            valid_locs, 
+            result["optimized_route_indices"], 
+            v_details["max_weight"], 
+            request.cargo_weight_kg
+        )
+        
+        trip_cost = distance * v_details["cost_per_km"]
+        co2_emissions = round(distance * v_details["co2_factor"], 2)
+        
         result.update({
-            "total_distance_km": round(result["total_distance_km"], 2),
-            "co2_emissions_kg": calculate_co2(result["total_distance_km"], request.vehicle_type),
+            "total_distance_km": distance,
+            "co2_emissions_kg": co2_emissions,
             "coordinates": coords,
             "valid_locations": valid_locs,
-            "road_geometry": geometry
+            "road_geometry": geometry,
+            "vehicle_recommended": v_details["name"],
+            "trip_cost_inr": trip_cost,
+            "pooling_opportunities": pooling,
+            "backhaul_opportunity": backhaul,
+            "capacity_utilization_percent": round((request.cargo_weight_kg / v_details["max_weight"]) * 100, 1)
         })
         
     return result
