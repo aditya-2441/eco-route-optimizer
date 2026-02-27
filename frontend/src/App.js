@@ -158,7 +158,7 @@ function ListFleetView({ refreshTrucks }) {
               <input type="number" className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" value={capacity} onChange={e => setCapacity(e.target.value)} />
             </div>
             <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">Vehicle Type</label>
+              <label className="block text-sm font-bold text-gray-700 mb-2">Cargo Type</label>
               <select className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" value={type} onChange={e => setType(e.target.value)}>
                 <option value="Standard">Standard Freight</option>
                 <option value="Perishable">Refrigerated (Perishable)</option>
