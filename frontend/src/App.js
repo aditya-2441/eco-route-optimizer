@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
-import { Leaf, Route as RouteIcon, MapPin, Package, Weight, Info, RefreshCw, IndianRupee, Truck, Search, PlusCircle, CheckCircle } from 'lucide-react';
+import { Leaf, Milestone as RouteIcon, MapPin, Package, Weight, Info, RefreshCw, IndianRupee, Truck, Search, PlusCircle, CheckCircle } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
